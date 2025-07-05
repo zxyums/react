@@ -1,0 +1,280 @@
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { AgGridReact } from "ag-grid-react";
+import { ModuleRegistry } from "ag-grid-community";
+import { ServerSideRowModelModule, ClientSideRowModelModule } from "ag-grid-enterprise";
+import "ag-grid-community/styles/ag-grid.css";
+import "ag-grid-community/styles/ag-theme-alpine.css";
+import { RootState } from "../.././../store";
+import { useSelector } from "react-redux";
+import { LicenseManager } from "ag-grid-enterprise";
+import { 
+  Dialog, 
+  DialogTitle, 
+  DialogContent, 
+  DialogActions, 
+  Button, 
+  TextField 
+} from "@mui/material";
+
+// Register modules and license
+ModuleRegistry.registerModules([ServerSideRowModelModule, ClientSideRowModelModule]);
+LicenseManager.setLicenseKey("your-license-key-here"); // Replace with your valid license key
+
+const ETSServerGrid = () => {
+  const [gridApi, setGridApi] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isServerSide, setIsServerSide] = useState(true);
+  const [allRowData, setAllRowData] = useState<any[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchParams, setSearchParams] = useState({ ruleName: "", ruleId: "" });
+  const accessToken = useSelector((state: RootState) => state.userTokens.accessToken);
+
+  const gridOptions = useMemo(() => ({
+    rowModelType: isServerSide ? "serverSide" : "clientSide",
+    serverSideInfiniteScroll: false,
+    pagination: true,
+    paginationPageSize: 10,
+    cacheBlockSize: 10,
+    maxBlocksInCache: 1,
+    serverSideStoreType: "partial",
+    maxConcurrentDatasourceRequests: 1,
+    blockLoadDebounceMillis: 500,
+    paginationPageSize: true,
+    paginationPageSizeSelector: [10, 20, 50],
+    paginationGoToPage: true,
+    enableFilter: true,
+    enableSorting: true,
+    multiSortKey: "ctrl",
+    suppressServerSideGroup: true,
+    suppressServerSideFilter: isServerSide,
+  }), [isServerSide]);
+
+  const columnDefs = useMemo(() => [
+    { field: "ruleId", headerName: "Rule ID", sortable: true, filter: "agTextColumnFilter" },
+    { field: "ruleName", headerName: "Rule Name", sortable: true, filter: "agTextColumnFilter" },
+    { field: "ruleNameStatus", headerName: "Status", sortable: true, filter: "agTextColumnFilter" },
+    { field: "ruleType", headerName: "Rule Type", sortable: true, filter: "agTextColumnFilter" },
+  ], []);
+
+  const defaultColDef = useMemo(() => ({
+    resizable: true,
+    sortable: true,
+    filter: true,
+  }), []);
+
+  const serverSideDataSource = useMemo(() => ({
+    getRows: async (params) => {
+      setIsLoading(true);
+      try {
+        const { startRow, endRow, sortModel, filterModel } = params.request;
+
+        console.log(
+          "Server-side Fetching - startRow:",
+          startRow,
+          "endRow:",
+          endRow,
+          "sortModel:",
+          sortModel,
+          "filterModel:",
+          filterModel,
+          "searchParams:",
+          searchParams
+        );
+
+        const sortParam = sortModel.length ? `&sort=${encodeURIComponent(JSON.stringify(sortModel))}` : "";
+        const filterParam = filterModel ? `&filter=${encodeURIComponent(JSON.stringify(filterModel))}` : "";
+        const searchParam = searchParams.ruleName || searchParams.ruleId 
+          ? `&ruleName=${encodeURIComponent(searchParams.ruleName)}&ruleId=${encodeURIComponent(searchParams.ruleId)}`
+          : "";
+
+        const response = await fetch(
+          `/api/v5/rule/getAll/RT009${sortParam}${filterParam}${searchParam}`,
+          {
+            method: "GET",
+            headers: { "Authorization": `Bearer ${accessToken}` },
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log("Server-side API Response:", data);
+
+        const rowData = data.data || [];
+        const totalRecords = data.totalRecords || 0;
+
+        if (startRow >= totalRecords) {
+          params.success({ rowData: [], rowCount: totalRecords });
+        } else {
+          params.success({ rowData, rowCount: totalRecords });
+        }
+      } catch (error) {
+        console.error("Server-side Error fetching data:", error);
+        params.fail();
+      } finally {
+        setIsLoading(false);
+      }
+    },
+  }), [accessToken, searchParams]);
+
+  const clientSideDataSource = useMemo(() => ({
+    rowData: allRowData,
+    getRows: () => {
+      console.log("Client-side data used:", allRowData);
+      return { rowData: allRowData, rowCount: allRowData.length };
+    },
+  }), [allRowData]);
+
+  const onGridReady = useCallback((params) => {
+    setGridApi(params.api);
+    if (params.api) {
+      console.log("Setting datasource for mode:", isServerSide ? "Server-side" : "Client-side");
+      if (isServerSide) {
+        params.api.setServerSideDatasource(serverSideDataSource);
+      } else {
+        params.api.setRowData(allRowData);
+      }
+    } else {
+      console.error("Grid API not initialized");
+    }
+  }, [isServerSide, serverSideDataSource, allRowData]);
+
+  useEffect(() => {
+    if (!isServerSide && gridApi && allRowData.length === 0) {
+      setIsLoading(true);
+      fetch(`/api/v5/rule/getAll/RT009`, {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${accessToken}` },
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          return response.json();
+        })
+        .then((data) => {
+          setAllRowData(data.data || []);
+          if (gridApi) gridApi.setRowData(data.data || []);
+        })
+        .catch((error) => {
+          console.error("Client-side data fetch error:", error);
+        })
+        .finally(() => {
+          setIsLoading(false);
+        });
+    }
+  }, [isServerSide, gridApi, allRowData.length, accessToken]);
+
+  const toggleMode = () => {
+    setIsServerSide((prev) => !prev);
+    if (gridApi) {
+      if (isServerSide) {
+        // Switching to client-side, ensure data is loaded
+        if (allRowData.length === 0) {
+          setIsLoading(true);
+          fetch(`/api/v5/rule/getAll/RT009`, {
+            method: "GET",
+            headers: { "Authorization": `Bearer ${accessToken}` },
+          })
+            .then((response) => {
+              if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+              return response.json();
+            })
+            .then((data) => {
+              setAllRowData(data.data || []);
+              gridApi.setRowData(data.data || []);
+            })
+            .catch((error) => {
+              console.error("Client-side data fetch error on mode switch:", error);
+            })
+            .finally(() => {
+              setIsLoading(false);
+            });
+        } else {
+          gridApi.setRowData(allRowData);
+        }
+      } else {
+        // Switching to server-side, refresh datasource
+        gridApi.setServerSideDatasource(serverSideDataSource);
+        gridApi.refreshServerSideStore({ purge: true }); // Ensure store is refreshed
+      }
+    }
+  };
+
+  const handleSearchOpen = () => setSearchOpen(true);
+  const handleSearchClose = () => setSearchOpen(false);
+
+  const handleSearchSubmit = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/v5/rule/search/RT009?ruleName=${encodeURIComponent(searchParams.ruleName)}&ruleId=${encodeURIComponent(searchParams.ruleId)}`, {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+      if (isServerSide) {
+        gridApi?.refreshServerSideStore({ purge: true }); // Refresh to apply search params
+      } else {
+        setAllRowData(data.data || []);
+        if (gridApi) gridApi.setRowData(data.data || []);
+      }
+    } catch (error) {
+      console.error("Search error:", error);
+    } finally {
+      setIsLoading(false);
+      handleSearchClose();
+    }
+  };
+
+  return (
+    <div>
+      <button onClick={toggleMode} style={{ marginBottom: "10px" }}>
+        Switch to {isServerSide ? "Client-side" : "Server-side"} Mode
+      </button>
+      <button onClick={handleSearchOpen} style={{ marginBottom: "10px", marginLeft: "10px" }}>
+        Open Search
+      </button>
+      <Dialog open={searchOpen} onClose={handleSearchClose}>
+        <DialogTitle>Search Rules</DialogTitle>
+        <DialogContent>
+          <TextField
+            label="Rule Name"
+            value={searchParams.ruleName}
+            onChange={(e) => setSearchParams({ ...searchParams, ruleName: e.target.value })}
+            fullWidth
+            margin="normal"
+          />
+          <TextField
+            label="Rule ID"
+            value={searchParams.ruleId}
+            onChange={(e) => setSearchParams({ ...searchParams, ruleId: e.target.value })}
+            fullWidth
+            margin="normal"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleSearchClose}>Cancel</Button>
+          <Button onClick={handleSearchSubmit}>Search</Button>
+        </DialogActions>
+      </Dialog>
+      {isLoading && (
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 1000, background: "rgba(0, 0, 0, 0.5)", color: "white", padding: "10px", borderRadius: "5px" }}>
+          Loading...
+        </div>
+      )}
+      <div className="ag-theme-alpine" style={{ height: 600, width: "100%", position: "relative" }}>
+        <AgGridReact
+          gridOptions={gridOptions}
+          columnDefs={columnDefs}
+          defaultColDef={defaultColDef}
+          onGridReady={onGridReady}
+          paginationAutoPageSize={false}
+          suppressPaginationPanel={false}
+        />
+      </div>
+    </div>
+  );
+};
+
+export default ETSServerGrid;
