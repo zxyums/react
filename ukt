@@ -151,10 +151,8 @@ const ETSServerGrid = () => {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
       if (isServerSide) {
-        // For server-side, update the datasource to include search params
         gridApi?.refreshServerSideStore({ purge: true });
       } else {
-        // For client-side, set the new data
         setAllRowData(data.data || []);
         gridApi?.setRowData(data.data || []);
       }
