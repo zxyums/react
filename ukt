@@ -7,11 +7,18 @@ import "ag-grid-community/styles/ag-theme-alpine.css";
 import { RootState } from "../.././../store";
 import { useSelector } from "react-redux";
 import { LicenseManager } from "ag-grid-enterprise";
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField } from "@mui/material";
+import { 
+  Dialog, 
+  DialogTitle, 
+  DialogContent, 
+  DialogActions, 
+  Button, 
+  TextField 
+} from "@mui/material";
 
 // Register modules and license
 ModuleRegistry.registerModules([ServerSideRowModelModule, ClientSideRowModelModule]);
-LicenseManager.setLicenseKey("your-license-key-here");
+LicenseManager.setLicenseKey("your-license-key-here"); // Replace with your valid license key
 
 const ETSServerGrid = () => {
   const [gridApi, setGridApi] = useState(null);
@@ -60,24 +67,38 @@ const ETSServerGrid = () => {
       setIsLoading(true);
       try {
         const { startRow, endRow, sortModel, filterModel } = params.request;
-        const pageSize = endRow - startRow;
-        const pageNumber = Math.floor(startRow / pageSize) + 1;
 
-        console.log("Server-side Fetching - pageNumber:", pageNumber, "pageSize:", pageSize, "sortModel:", sortModel, "filterModel:", filterModel, "searchParams:", searchParams);
+        console.log(
+          "Server-side Fetching - startRow:",
+          startRow,
+          "endRow:",
+          endRow,
+          "sortModel:",
+          sortModel,
+          "filterModel:",
+          filterModel,
+          "searchParams:",
+          searchParams
+        );
 
         const sortParam = sortModel.length ? `&sort=${encodeURIComponent(JSON.stringify(sortModel))}` : "";
         const filterParam = filterModel ? `&filter=${encodeURIComponent(JSON.stringify(filterModel))}` : "";
-        const searchParam = searchParams.ruleName || searchParams.ruleId ? `&ruleName=${searchParams.ruleName}&ruleId=${searchParams.ruleId}` : "";
+        const searchParam = searchParams.ruleName || searchParams.ruleId 
+          ? `&ruleName=${encodeURIComponent(searchParams.ruleName)}&ruleId=${encodeURIComponent(searchParams.ruleId)}`
+          : "";
 
         const response = await fetch(
-          `/api/v5/rule/getAll/RT009?pageNum=${pageNumber}&size=${pageSize}${sortParam}${filterParam}${searchParam}`,
+          `/api/v5/rule/getAll/RT009${sortParam}${filterParam}${searchParam}`,
           {
             method: "GET",
             headers: { "Authorization": `Bearer ${accessToken}` },
           }
         );
 
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
         const data = await response.json();
         console.log("Server-side API Response:", data);
 
@@ -111,21 +132,35 @@ const ETSServerGrid = () => {
     if (params.api) {
       console.log("Setting datasource for mode:", isServerSide ? "Server-side" : "Client-side");
       params.api.setServerSideDatasource(isServerSide ? serverSideDataSource : null);
-      if (!isServerSide) params.api.setRowData(allRowData);
-    } else console.error("Grid API not initialized");
+      if (!isServerSide) {
+        params.api.setRowData(allRowData);
+      }
+    } else {
+      console.error("Grid API not initialized");
+    }
   }, [isServerSide, serverSideDataSource, allRowData]);
 
   useEffect(() => {
     if (!isServerSide && gridApi && allRowData.length === 0) {
       setIsLoading(true);
-      fetch(`/api/v5/rule/getAll/RT009?size=1000`, {
+      fetch(`/api/v5/rule/getAll/RT009`, {
         method: "GET",
         headers: { "Authorization": `Bearer ${accessToken}` },
       })
-        .then((response) => { if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`); return response.json(); })
-        .then((data) => setAllRowData(data.data || []))
-        .catch((error) => console.error("Client-side data fetch error:", error))
-        .finally(() => setIsLoading(false));
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          return response.json();
+        })
+        .then((data) => {
+          setAllRowData(data.data || []);
+          if (gridApi) gridApi.setRowData(data.data || []);
+        })
+        .catch((error) => {
+          console.error("Client-side data fetch error:", error);
+        })
+        .finally(() => {
+          setIsLoading(false);
+        });
     }
   }, [isServerSide, gridApi, allRowData.length, accessToken]);
 
@@ -133,8 +168,11 @@ const ETSServerGrid = () => {
     setIsServerSide((prev) => !prev);
     if (gridApi) {
       gridApi.refreshServerSideStore({ purge: true });
-      if (!isServerSide) gridApi.setRowData(allRowData);
-      else gridApi.setServerSideDatasource(serverSideDataSource);
+      if (!isServerSide) {
+        gridApi.setRowData(allRowData);
+      } else {
+        gridApi.setServerSideDatasource(serverSideDataSource);
+      }
     }
   };
 
@@ -144,7 +182,7 @@ const ETSServerGrid = () => {
   const handleSearchSubmit = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/v5/rule/search?ruleName=${searchParams.ruleName}&ruleId=${searchParams.ruleId}`, {
+      const response = await fetch(`/api/v5/rule/search/RT009?ruleName=${encodeURIComponent(searchParams.ruleName)}&ruleId=${encodeURIComponent(searchParams.ruleId)}`, {
         method: "GET",
         headers: { "Authorization": `Bearer ${accessToken}` },
       });
@@ -154,7 +192,7 @@ const ETSServerGrid = () => {
         gridApi?.refreshServerSideStore({ purge: true });
       } else {
         setAllRowData(data.data || []);
-        gridApi?.setRowData(data.data || []);
+        if (gridApi) gridApi.setRowData(data.data || []);
       }
     } catch (error) {
       console.error("Search error:", error);
