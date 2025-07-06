@@ -1,33 +1,24 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
-import { AgGridReact } from "ag-grid-react";
-import { ModuleRegistry } from "ag-grid-community";
-import { ServerSideRowModelModule, ClientSideRowModelModule } from "ag-grid-enterprise";
-import "ag-grid-community/styles/ag-grid.css";
-import "ag-grid-community/styles/ag-theme-alpine.css";
-import { RootState } from "../.././../store";
-import { useSelector } from "react-redux";
-import { LicenseManager } from "ag-grid-enterprise";
-import { 
-  Dialog, 
-  DialogTitle, 
-  DialogContent, 
-  DialogActions, 
-  Button, 
-  TextField 
-} from "@mui/material";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { ColDef } from "ag-grid-community";
 
-// Register modules and license
-ModuleRegistry.registerModules([ServerSideRowModelModule, ClientSideRowModelModule]);
-LicenseManager.setLicenseKey("your-license-key-here"); // Replace with your valid license key
+interface AgGridDataProps {
+  endpoint: string;
+  columnDefs: ColDef[];
+  accessToken: string;
+}
 
-const ETSServerGrid = () => {
-  const [gridApi, setGridApi] = useState(null);
+interface SearchParams {
+  ruleName: string;
+  ruleId: string;
+}
+
+export const useAgGridData = ({ endpoint, columnDefs, accessToken }: AgGridDataProps) => {
+  const [gridApi, setGridApi] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isServerSide, setIsServerSide] = useState(true);
   const [allRowData, setAllRowData] = useState<any[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchParams, setSearchParams] = useState({ ruleName: "", ruleId: "" });
-  const accessToken = useSelector((state: RootState) => state.userTokens.accessToken);
+  const [searchParams, setSearchParams] = useState<SearchParams>({ ruleName: "", ruleId: "" });
 
   const gridOptions = useMemo(() => ({
     rowModelType: isServerSide ? "serverSide" : "clientSide",
@@ -45,25 +36,14 @@ const ETSServerGrid = () => {
     enableFilter: true,
     enableSorting: true,
     multiSortKey: "ctrl",
-    suppressServerSideGroup: true,
-    suppressServerSideFilter: isServerSide,
+    suppressServerSideGroup: true, // Disable server-side row grouping
+    groupDisplayType: isServerSide ? undefined : "groupRows", // Enable client-side row grouping
+    suppressServerSideFilter: isServerSide, // Server-side filtering off in client-side mode
+    suppressServerSideSort: isServerSide, // Server-side sorting off in client-side mode
   }), [isServerSide]);
 
-  const columnDefs = useMemo(() => [
-    { field: "ruleId", headerName: "Rule ID", sortable: true, filter: "agTextColumnFilter" },
-    { field: "ruleName", headerName: "Rule Name", sortable: true, filter: "agTextColumnFilter" },
-    { field: "ruleNameStatus", headerName: "Status", sortable: true, filter: "agTextColumnFilter" },
-    { field: "ruleType", headerName: "Rule Type", sortable: true, filter: "agTextColumnFilter" },
-  ], []);
-
-  const defaultColDef = useMemo(() => ({
-    resizable: true,
-    sortable: true,
-    filter: true,
-  }), []);
-
   const serverSideDataSource = useMemo(() => ({
-    getRows: async (params) => {
+    getRows: async (params: any) => {
       setIsLoading(true);
       try {
         const { startRow, endRow, sortModel, filterModel } = params.request;
@@ -83,12 +63,12 @@ const ETSServerGrid = () => {
 
         const sortParam = sortModel.length ? `&sort=${encodeURIComponent(JSON.stringify(sortModel))}` : "";
         const filterParam = filterModel ? `&filter=${encodeURIComponent(JSON.stringify(filterModel))}` : "";
-        const searchParam = searchParams.ruleName || searchParams.ruleId 
+        const searchParam = searchParams.ruleName || searchParams.ruleId
           ? `&ruleName=${encodeURIComponent(searchParams.ruleName)}&ruleId=${encodeURIComponent(searchParams.ruleId)}`
           : "";
 
         const response = await fetch(
-          `/api/v5/rule/getAll/RT009${sortParam}${filterParam}${searchParam}`,
+          `${endpoint}${sortParam}${filterParam}${searchParam}`,
           {
             method: "GET",
             headers: { "Authorization": `Bearer ${accessToken}` },
@@ -117,7 +97,7 @@ const ETSServerGrid = () => {
         setIsLoading(false);
       }
     },
-  }), [accessToken, searchParams]);
+  }), [accessToken, searchParams, endpoint]);
 
   const clientSideDataSource = useMemo(() => ({
     rowData: allRowData,
@@ -127,12 +107,13 @@ const ETSServerGrid = () => {
     },
   }), [allRowData]);
 
-  const onGridReady = useCallback((params) => {
+  const onGridReady = useCallback((params: any) => {
     setGridApi(params.api);
     if (params.api) {
       console.log("Setting datasource for mode:", isServerSide ? "Server-side" : "Client-side");
-      params.api.setServerSideDatasource(isServerSide ? serverSideDataSource : null);
-      if (!isServerSide) {
+      if (isServerSide) {
+        params.api.setServerSideDatasource(serverSideDataSource);
+      } else {
         params.api.setRowData(allRowData);
       }
     } else {
@@ -143,7 +124,7 @@ const ETSServerGrid = () => {
   useEffect(() => {
     if (!isServerSide && gridApi && allRowData.length === 0) {
       setIsLoading(true);
-      fetch(`/api/v5/rule/getAll/RT009`, {
+      fetch(`${endpoint}`, {
         method: "GET",
         headers: { "Authorization": `Bearer ${accessToken}` },
       })
@@ -162,16 +143,38 @@ const ETSServerGrid = () => {
           setIsLoading(false);
         });
     }
-  }, [isServerSide, gridApi, allRowData.length, accessToken]);
+  }, [isServerSide, gridApi, allRowData.length, accessToken, endpoint]);
 
   const toggleMode = () => {
     setIsServerSide((prev) => !prev);
     if (gridApi) {
-      gridApi.refreshServerSideStore({ purge: true });
-      if (!isServerSide) {
-        gridApi.setRowData(allRowData);
+      if (isServerSide) {
+        if (allRowData.length === 0) {
+          setIsLoading(true);
+          fetch(`${endpoint}`, {
+            method: "GET",
+            headers: { "Authorization": `Bearer ${accessToken}` },
+          })
+            .then((response) => {
+              if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+              return response.json();
+            })
+            .then((data) => {
+              setAllRowData(data.data || []);
+              gridApi.setRowData(data.data || []);
+            })
+            .catch((error) => {
+              console.error("Client-side data fetch error on mode switch:", error);
+            })
+            .finally(() => {
+              setIsLoading(false);
+            });
+        } else {
+          gridApi.setRowData(allRowData);
+        }
       } else {
         gridApi.setServerSideDatasource(serverSideDataSource);
+        gridApi.refreshServerSideStore({ purge: true }); // Ensure store is refreshed
       }
     }
   };
@@ -182,7 +185,7 @@ const ETSServerGrid = () => {
   const handleSearchSubmit = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/v5/rule/search/RT009?ruleName=${encodeURIComponent(searchParams.ruleName)}&ruleId=${encodeURIComponent(searchParams.ruleId)}`, {
+      const response = await fetch(`${endpoint.replace("getAll", "search")}/RT009?ruleName=${encodeURIComponent(searchParams.ruleName)}&ruleId=${encodeURIComponent(searchParams.ruleId)}`, {
         method: "GET",
         headers: { "Authorization": `Bearer ${accessToken}` },
       });
@@ -201,6 +204,58 @@ const ETSServerGrid = () => {
       handleSearchClose();
     }
   };
+
+  return {
+    gridApi,
+    isLoading,
+    isServerSide,
+    allRowData,
+    searchOpen,
+    searchParams,
+    gridOptions,
+    columnDefs,
+    defaultColDef,
+    onGridReady,
+    toggleMode,
+    handleSearchOpen,
+    handleSearchClose,
+    handleSearchSubmit,
+    setSearchParams,
+  };
+};
+
+export default useAgGridData;import React from "react";
+import useAgGridData from "./useAgGridData";
+import { RootState } from "../.././../store";
+import { useSelector } from "react-redux";
+
+const ETSServerGrid = () => {
+  const {
+    gridApi,
+    isLoading,
+    isServerSide,
+    allRowData,
+    searchOpen,
+    searchParams,
+    gridOptions,
+    columnDefs,
+    defaultColDef,
+    onGridReady,
+    toggleMode,
+    handleSearchOpen,
+    handleSearchClose,
+    handleSearchSubmit,
+    setSearchParams,
+  } = useAgGridData({
+    endpoint: "/api/v5/rule/getAll/RT009", // Customize per page
+    columnDefs: [
+      { field: "ruleId", headerName: "Rule ID", sortable: true, filter: "agTextColumnFilter" },
+      { field: "ruleName", headerName: "Rule Name", sortable: true, filter: "agTextColumnFilter" },
+      { field: "ruleNameStatus", headerName: "Status", sortable: true, filter: "agTextColumnFilter" },
+      { field: "ruleType", headerName: "Rule Type", sortable: true, filter: "agTextColumnFilter" },
+    ],
+    accessToken: useSelector((state: RootState) => state.userTokens.accessToken),
+  });
 
   return (
     <div>
@@ -253,3 +308,33 @@ const ETSServerGrid = () => {
 };
 
 export default ETSServerGrid;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
