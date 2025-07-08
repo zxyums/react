@@ -1,0 +1,22 @@
+import { useRef, useState } from 'react';
+
+const [pageInput, setPageInput] = useState('');
+const gridRef = useRef<AgGridReact>(null);
+
+const handleGoToPage = () => {
+  const pageNum = parseInt(pageInput, 10);
+  if (!isNaN(pageNum)) {
+    gridRef.current.api.paginationGoToPage(pageNum - 1); // 0-based
+  }
+};
+
+// In JSX:
+<div style={{ margin: '10px 0' }}>
+  <input
+    type="number"
+    value={pageInput}
+    onChange={(e) => setPageInput(e.target.value)}
+    placeholder="Enter page number"
+  />
+  <button onClick={handleGoToPage}>Go</button>
+</div>
